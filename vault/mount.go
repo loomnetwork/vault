@@ -74,8 +74,16 @@ var (
 	// to move/rename backends but maintain backwards compatibility
 	mountAliases = map[string]string{"generic": "kv"}
 
-	predefinedAccessors = map[string]string{
+	predefinedMountAccessors = map[string]string{
 		"entcubbyhole/": "plugin_bd3caa6e",
+	}
+
+	predefinedMountUUIDs = map[string]string{
+		"entcubbyhole/": "9a4dc794-18f4-11e9-ab14-d663bd873d93",
+	}
+
+	preserveMountView = map[string]bool{
+		"entcubbyhole/": true,
 	}
 )
 
@@ -103,7 +111,7 @@ func (c *Core) generateMountAccessor(typeOfPlugin, path string) (string, error) 
 		path = hex.EncodeToString(randomBytes)
 	}
 
-	if predefinedAccessor, ok := predefinedAccessors[path]; ok {
+	if predefinedAccessor, ok := predefinedMountAccessors[path]; ok {
 		return predefinedAccessor, nil
 	}
 
@@ -231,6 +239,14 @@ func (c *Core) mount(ctx context.Context, entry *MountEntry) error {
 	return c.mountInternal(ctx, entry)
 }
 
+func (c *Core) generateMountUUID(mountPath string) (string, error) {
+	mountPath = sanitizeMountPath(mountPath)
+	if predefinedUUID, ok := predefinedMountUUIDs[sanitizeMountPath(mountPath)]; ok {
+		return predefinedUUID, nil
+	}
+	return uuid.GenerateUUID()
+}
+
 func (c *Core) mountInternal(ctx context.Context, entry *MountEntry) error {
 	c.mountsLock.Lock()
 	defer c.mountsLock.Unlock()
@@ -242,7 +258,7 @@ func (c *Core) mountInternal(ctx context.Context, entry *MountEntry) error {
 
 	// Generate a new UUID and view
 	if entry.UUID == "" {
-		entryUUID, err := uuid.GenerateUUID()
+		entryUUID, err := c.generateMountUUID(entry.Path)
 		if err != nil {
 			return err
 		}
@@ -367,9 +383,14 @@ func (c *Core) unmountInternal(ctx context.Context, path string) error {
 	switch {
 	case entry.Local, !c.ReplicationState().HasState(consts.ReplicationPerformanceSecondary):
 		// Have writable storage, remove the whole thing
-		if err := logical.ClearView(ctx, view); err != nil {
-			c.logger.Error("core: failed to clear view for path being unmounted", "error", err, "path", path)
-			return err
+		if _, ok := preserveMountView[sanitizeMountPath(entry.Path)]; !ok {
+			c.logger.Warn("core: clearing view for mount entry being unmounted", "path", entry.Path)
+			if err := logical.ClearView(ctx, view); err != nil {
+				c.logger.Error("core: failed to clear view for path being unmounted", "error", err, "path", path)
+				return err
+			}
+		} else {
+			c.logger.Info("core: preserving view for mount entry being unmounted", "path", entry.Path)
 		}
 	}
 
