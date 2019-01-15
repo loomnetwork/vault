@@ -120,6 +120,14 @@ func (c *Core) generateMountAccessor(typeOfPlugin, path string) (string, error) 
 	return accessor, nil
 }
 
+func (c *Core) generateMountUUID(mountPath string) (string, error) {
+	mountPath = sanitizeMountPath(mountPath)
+	if predefinedUUID, ok := predefinedMountUUIDs[sanitizeMountPath(mountPath)]; ok {
+		return predefinedUUID, nil
+	}
+	return uuid.GenerateUUID()
+}
+
 // MountTable is used to represent the internal mount table
 type MountTable struct {
 	Type    string        `json:"type"`
@@ -237,14 +245,6 @@ func (c *Core) mount(ctx context.Context, entry *MountEntry) error {
 		}
 	}
 	return c.mountInternal(ctx, entry)
-}
-
-func (c *Core) generateMountUUID(mountPath string) (string, error) {
-	mountPath = sanitizeMountPath(mountPath)
-	if predefinedUUID, ok := predefinedMountUUIDs[sanitizeMountPath(mountPath)]; ok {
-		return predefinedUUID, nil
-	}
-	return uuid.GenerateUUID()
 }
 
 func (c *Core) mountInternal(ctx context.Context, entry *MountEntry) error {

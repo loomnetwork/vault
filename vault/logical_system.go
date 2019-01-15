@@ -1394,6 +1394,7 @@ func (b *SystemBackend) handleMountTable(ctx context.Context, req *logical.Reque
 		info := map[string]interface{}{
 			"type":        entry.Type,
 			"description": entry.Description,
+			"uuid":        entry.UUID,
 			"accessor":    entry.Accessor,
 			"config": map[string]interface{}{
 				"default_lease_ttl": int64(entry.Config.DefaultLeaseTTL.Seconds()),
