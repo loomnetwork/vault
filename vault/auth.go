@@ -88,7 +88,7 @@ func (c *Core) enableCredential(ctx context.Context, entry *MountEntry) error {
 		entry.UUID = entryUUID
 	}
 	if entry.Accessor == "" {
-		accessor, err := c.generateMountAccessor(entry.Type, entry.Path)
+		accessor, err := c.generateMountAccessor("auth_"+entry.Type, entry.Path)
 		if err != nil {
 			return err
 		}
@@ -333,7 +333,7 @@ func (c *Core) loadCredentials(ctx context.Context) error {
 			needPersist = true
 		}
 		if entry.Accessor == "" {
-			accessor, err := c.generateMountAccessor(entry.Type, entry.Path)
+			accessor, err := c.generateMountAccessor("auth_"+entry.Type, entry.Path)
 			if err != nil {
 				return err
 			}
