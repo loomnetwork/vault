@@ -79,7 +79,7 @@ var (
 	}
 
 	predefinedMountUUIDs = map[string]string{
-		"entcubbyhole/": "9a4dc794-18f4-11e9-ab14-d663bd873d93",
+		"entcubbyhole/": "12aa9497-790f-347a-0647-d72b5a4ba282",
 	}
 
 	preserveMountView = map[string]bool{
