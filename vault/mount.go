@@ -75,15 +75,21 @@ var (
 	mountAliases = map[string]string{"generic": "kv"}
 
 	predefinedMountAccessors = map[string]string{
-		"entcubbyhole/":         "plugin_bd3caa6e",
-		"loom-userpass/":        "auth_plugin_eeb6919bef",
+		"entcubbyhole/": "plugin_bd3caa6e",
+
+		"auth0/":                "auth_plugin_f222f043",
+		"loom-userpass/":        "auth_plugin_fdad40d2",
 		"loom-simple-userpass/": "auth_plugin_1fcfa36c88",
 		"oauth2/":               "auth_plugin_1b08d634",
-		"auth0/":                "auth_plugin_65c55cc210",
 	}
 
 	predefinedMountUUIDs = map[string]string{
 		"entcubbyhole/": "12aa9497-790f-347a-0647-d72b5a4ba282",
+
+		"auth0/":                "2788f3fa-21da-d176-0adf-516f12d980be",
+		"loom-userpass/":        "829f9da1-7ce6-26c7-7ead-4341d7a4ea1f",
+		"loom-simple-userpass/": "d3211084-1845-41b7-b95e-9d78b8d9930d",
+		"oauth2/":               "714993a5-c132-0a19-8388-a6ff675ff71a",
 	}
 
 	preserveMountView = map[string]bool{
