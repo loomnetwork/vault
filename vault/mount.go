@@ -78,7 +78,7 @@ var (
 		"entcubbyhole/": "plugin_bd3caa6e",
 
 		"auth0/":                "auth_plugin_f222f043",
-		"loom-userpass/":        "auth_plugin_fdad40d2",
+		"loom-userpass/":        "auth_plugin_9ead4e57",
 		"loom-simple-userpass/": "auth_plugin_1fcfa36c88",
 		"oauth2/":               "auth_plugin_1b08d634",
 	}
