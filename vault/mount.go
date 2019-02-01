@@ -75,7 +75,11 @@ var (
 	mountAliases = map[string]string{"generic": "kv"}
 
 	predefinedMountAccessors = map[string]string{
-		"entcubbyhole/": "plugin_bd3caa6e",
+		"entcubbyhole/":         "plugin_bd3caa6e",
+		"loom-userpass/":        "auth_plugin_eeb6919bef",
+		"loom-simple-userpass/": "auth_plugin_1fcfa36c88",
+		"oauth2/":               "auth_plugin_1b08d634",
+		"auth0/":                "auth_plugin_65c55cc210",
 	}
 
 	predefinedMountUUIDs = map[string]string{
@@ -366,9 +370,14 @@ func (c *Core) unmountInternal(ctx context.Context, path string) error {
 			return err
 		}
 
-		// Revoke all the dynamic keys
-		if err := c.expiration.RevokePrefix(path); err != nil {
-			return err
+		// Revoke credentials from this path
+		if _, ok := preserveMountView[sanitizeMountPath(entry.Path)]; !ok {
+			c.logger.Warn("core: revoking all secrets for mount entry being unmounted", "path", entry.Path)
+			if err := c.expiration.RevokePrefix(path); err != nil {
+				return err
+			}
+		} else {
+			c.logger.Info("core: preserving all secrets for mount entry being unmounted", "path", entry.Path)
 		}
 
 		// Call cleanup function if it exists
@@ -383,6 +392,10 @@ func (c *Core) unmountInternal(ctx context.Context, path string) error {
 	switch {
 	case entry.Local, !c.ReplicationState().HasState(consts.ReplicationPerformanceSecondary):
 		// Have writable storage, remove the whole thing
+		// ------------------ Debug code will be removed
+		keys, _ := logical.CollectKeys(ctx, view)
+		c.logger.Warn("[Experimentation] core: entries into barrier view of mount", "entries", keys, "length", len(keys))
+		// ------------------
 		if _, ok := preserveMountView[sanitizeMountPath(entry.Path)]; !ok {
 			c.logger.Warn("core: clearing view for mount entry being unmounted", "path", entry.Path)
 			if err := logical.ClearView(ctx, view); err != nil {
@@ -519,8 +532,13 @@ func (c *Core) remount(ctx context.Context, src, dst string) error {
 	}
 
 	// Revoke all the dynamic keys
-	if err := c.expiration.RevokePrefix(src); err != nil {
-		return err
+	if _, ok := preserveMountView[sanitizeMountPath(src)]; !ok {
+		c.logger.Warn("core: revoking all secrets for mount entry being remounted", "path", src)
+		if err := c.expiration.RevokePrefix(src); err != nil {
+			return err
+		}
+	} else {
+		c.logger.Info("core: preserving all secrets for mount entry being remounted", "path", src)
 	}
 
 	c.mountsLock.Lock()

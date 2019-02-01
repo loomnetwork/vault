@@ -41,6 +41,13 @@ var (
 	// credentialAliases maps old backend names to new backend names, allowing us
 	// to move/rename backends but maintain backwards compatibility
 	credentialAliases = map[string]string{"aws-ec2": "aws"}
+
+	preserveAuthView = map[string]bool{
+		"loom-userpass/":        true,
+		"loom-simple-userpass/": true,
+		"oauth2/":               true,
+		"auth0/":                true,
+	}
 )
 
 // enableCredential is used to enable a new credential backend
@@ -81,7 +88,7 @@ func (c *Core) enableCredential(ctx context.Context, entry *MountEntry) error {
 
 	// Generate a new UUID and view
 	if entry.UUID == "" {
-		entryUUID, err := uuid.GenerateUUID()
+		entryUUID, err := c.generateMountUUID(entry.Path)
 		if err != nil {
 			return err
 		}
@@ -176,8 +183,13 @@ func (c *Core) disableCredential(ctx context.Context, path string) error {
 
 	if backend != nil {
 		// Revoke credentials from this path
-		if err := c.expiration.RevokePrefix(fullPath); err != nil {
-			return err
+		if _, ok := preserveAuthView[sanitizeMountPath(entry.Path)]; !ok {
+			c.logger.Warn("core: revoking all secrets for auth entry being unmounted", "path", entry.Path)
+			if err := c.expiration.RevokePrefix(fullPath); err != nil {
+				return err
+			}
+		} else {
+			c.logger.Info("core: preserving all secrets for auth entry being unmounted", "path", entry.Path)
 		}
 
 		// Call cleanup function if it exists
@@ -192,11 +204,19 @@ func (c *Core) disableCredential(ctx context.Context, path string) error {
 	switch {
 	case entry.Local, !c.ReplicationState().HasState(consts.ReplicationPerformanceSecondary):
 		// Have writable storage, remove the whole thing
-		if err := logical.ClearView(ctx, view); err != nil {
-			c.logger.Error("core: failed to clear view for path being unmounted", "error", err, "path", path)
-			return err
+		if _, ok := preserveAuthView[sanitizeMountPath(entry.Path)]; !ok {
+			// ------------------ Debug code will be removed
+			keys, _ := logical.CollectKeys(ctx, view)
+			c.logger.Warn("[Experimentation] core: entries into barrier view of auth", "entries", keys, "length", len(keys))
+			// ------------------
+			c.logger.Warn("core: clearing view for auth entry being unmounted", "path", entry.Path)
+			if err := logical.ClearView(ctx, view); err != nil {
+				c.logger.Error("core: failed to clear view for path being unmounted", "error", err, "path", path)
+				return err
+			}
+		} else {
+			c.logger.Info("core: preserving view for auth entry being unmounted", "path", entry.Path)
 		}
-
 	}
 
 	// Remove the mount table entry
