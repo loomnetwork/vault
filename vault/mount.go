@@ -397,11 +397,6 @@ func (c *Core) unmountInternal(ctx context.Context, path string) error {
 
 	switch {
 	case entry.Local, !c.ReplicationState().HasState(consts.ReplicationPerformanceSecondary):
-		// Have writable storage, remove the whole thing
-		// ------------------ Debug code will be removed
-		keys, _ := logical.CollectKeys(ctx, view)
-		c.logger.Warn("[Experimentation] core: entries into barrier view of mount", "entries", keys, "length", len(keys))
-		// ------------------
 		if _, ok := preserveMountView[sanitizeMountPath(entry.Path)]; !ok {
 			c.logger.Warn("core: clearing view for mount entry being unmounted", "path", entry.Path)
 			if err := logical.ClearView(ctx, view); err != nil {
