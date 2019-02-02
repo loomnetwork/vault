@@ -2,6 +2,8 @@ package vault
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"sort"
@@ -71,6 +73,28 @@ var (
 	// mountAliases maps old backend names to new backend names, allowing us
 	// to move/rename backends but maintain backwards compatibility
 	mountAliases = map[string]string{"generic": "kv"}
+
+	predefinedMountAccessors = map[string]string{
+		"entcubbyhole/": "plugin_bd3caa6e",
+
+		"auth0/":                "auth_plugin_f222f043",
+		"loom-userpass/":        "auth_plugin_9ead4e57",
+		"loom-simple-userpass/": "auth_plugin_1fcfa36c88",
+		"oauth2/":               "auth_plugin_1b08d634",
+	}
+
+	predefinedMountUUIDs = map[string]string{
+		"entcubbyhole/": "12aa9497-790f-347a-0647-d72b5a4ba282",
+
+		"auth0/":                "2788f3fa-21da-d176-0adf-516f12d980be",
+		"loom-userpass/":        "829f9da1-7ce6-26c7-7ead-4341d7a4ea1f",
+		"loom-simple-userpass/": "d3211084-1845-41b7-b95e-9d78b8d9930d",
+		"oauth2/":               "714993a5-c132-0a19-8388-a6ff675ff71a",
+	}
+
+	preserveMountView = map[string]bool{
+		"entcubbyhole/": true,
+	}
 )
 
 func collectBackendLocalPaths(backend logical.Backend, viewPath string) []string {
@@ -86,20 +110,32 @@ func collectBackendLocalPaths(backend logical.Backend, viewPath string) []string
 	return paths
 }
 
-func (c *Core) generateMountAccessor(entryType string) (string, error) {
-	var accessor string
-	for {
-		randBytes, err := uuid.GenerateRandomBytes(4)
+func (c *Core) generateMountAccessor(typeOfPlugin, path string) (string, error) {
+	path = sanitizeMountPath(path)
+
+	if path == "" {
+		randomBytes, err := uuid.GenerateRandomBytes(32)
 		if err != nil {
 			return "", err
 		}
-		accessor = fmt.Sprintf("%s_%s", entryType, fmt.Sprintf("%08x", randBytes[0:4]))
-		if entry := c.router.MatchingMountByAccessor(accessor); entry == nil {
-			break
-		}
+		path = hex.EncodeToString(randomBytes)
 	}
 
+	if predefinedAccessor, ok := predefinedMountAccessors[path]; ok {
+		return predefinedAccessor, nil
+	}
+
+	entryHash := sha256.Sum256([]byte(typeOfPlugin + "_" + path))
+	accessor := fmt.Sprintf("%s_%s", typeOfPlugin, fmt.Sprintf("%08x", entryHash[0:5]))
 	return accessor, nil
+}
+
+func (c *Core) generateMountUUID(mountPath string) (string, error) {
+	mountPath = sanitizeMountPath(mountPath)
+	if predefinedUUID, ok := predefinedMountUUIDs[sanitizeMountPath(mountPath)]; ok {
+		return predefinedUUID, nil
+	}
+	return uuid.GenerateUUID()
 }
 
 // MountTable is used to represent the internal mount table
@@ -232,14 +268,14 @@ func (c *Core) mountInternal(ctx context.Context, entry *MountEntry) error {
 
 	// Generate a new UUID and view
 	if entry.UUID == "" {
-		entryUUID, err := uuid.GenerateUUID()
+		entryUUID, err := c.generateMountUUID(entry.Path)
 		if err != nil {
 			return err
 		}
 		entry.UUID = entryUUID
 	}
 	if entry.Accessor == "" {
-		accessor, err := c.generateMountAccessor(entry.Type)
+		accessor, err := c.generateMountAccessor(entry.Type, entry.Path)
 		if err != nil {
 			return err
 		}
@@ -340,9 +376,14 @@ func (c *Core) unmountInternal(ctx context.Context, path string) error {
 			return err
 		}
 
-		// Revoke all the dynamic keys
-		if err := c.expiration.RevokePrefix(path); err != nil {
-			return err
+		// Revoke credentials from this path
+		if _, ok := preserveMountView[sanitizeMountPath(entry.Path)]; !ok {
+			c.logger.Warn("core: revoking all secrets for mount entry being unmounted", "path", entry.Path)
+			if err := c.expiration.RevokePrefix(path); err != nil {
+				return err
+			}
+		} else {
+			c.logger.Info("core: preserving all secrets for mount entry being unmounted", "path", entry.Path)
 		}
 
 		// Call cleanup function if it exists
@@ -356,10 +397,14 @@ func (c *Core) unmountInternal(ctx context.Context, path string) error {
 
 	switch {
 	case entry.Local, !c.ReplicationState().HasState(consts.ReplicationPerformanceSecondary):
-		// Have writable storage, remove the whole thing
-		if err := logical.ClearView(ctx, view); err != nil {
-			c.logger.Error("core: failed to clear view for path being unmounted", "error", err, "path", path)
-			return err
+		if _, ok := preserveMountView[sanitizeMountPath(entry.Path)]; !ok {
+			c.logger.Warn("core: clearing view for mount entry being unmounted", "path", entry.Path)
+			if err := logical.ClearView(ctx, view); err != nil {
+				c.logger.Error("core: failed to clear view for path being unmounted", "error", err, "path", path)
+				return err
+			}
+		} else {
+			c.logger.Info("core: preserving view for mount entry being unmounted", "path", entry.Path)
 		}
 	}
 
@@ -488,8 +533,13 @@ func (c *Core) remount(ctx context.Context, src, dst string) error {
 	}
 
 	// Revoke all the dynamic keys
-	if err := c.expiration.RevokePrefix(src); err != nil {
-		return err
+	if _, ok := preserveMountView[sanitizeMountPath(src)]; !ok {
+		c.logger.Warn("core: revoking all secrets for mount entry being remounted", "path", src)
+		if err := c.expiration.RevokePrefix(src); err != nil {
+			return err
+		}
+	} else {
+		c.logger.Info("core: preserving all secrets for mount entry being remounted", "path", src)
 	}
 
 	c.mountsLock.Lock()
@@ -622,7 +672,7 @@ func (c *Core) loadMounts(ctx context.Context) error {
 			needPersist = true
 		}
 		if entry.Accessor == "" {
-			accessor, err := c.generateMountAccessor(entry.Type)
+			accessor, err := c.generateMountAccessor(entry.Type, entry.Path)
 			if err != nil {
 				return err
 			}
@@ -856,7 +906,7 @@ func (c *Core) defaultMountTable() *MountTable {
 	if err != nil {
 		panic(fmt.Sprintf("could not create default secret mount UUID: %v", err))
 	}
-	mountAccessor, err := c.generateMountAccessor("kv")
+	mountAccessor, err := c.generateMountAccessor("kv", "")
 	if err != nil {
 		panic(fmt.Sprintf("could not generate default secret mount accessor: %v", err))
 	}
@@ -883,7 +933,7 @@ func (c *Core) requiredMountTable() *MountTable {
 	if err != nil {
 		panic(fmt.Sprintf("could not create cubbyhole UUID: %v", err))
 	}
-	cubbyholeAccessor, err := c.generateMountAccessor("cubbyhole")
+	cubbyholeAccessor, err := c.generateMountAccessor("cubbyhole", "")
 	if err != nil {
 		panic(fmt.Sprintf("could not generate cubbyhole accessor: %v", err))
 	}
@@ -901,7 +951,7 @@ func (c *Core) requiredMountTable() *MountTable {
 	if err != nil {
 		panic(fmt.Sprintf("could not create sys UUID: %v", err))
 	}
-	sysAccessor, err := c.generateMountAccessor("system")
+	sysAccessor, err := c.generateMountAccessor("system", "")
 	if err != nil {
 		panic(fmt.Sprintf("could not generate sys accessor: %v", err))
 	}
@@ -918,7 +968,7 @@ func (c *Core) requiredMountTable() *MountTable {
 	if err != nil {
 		panic(fmt.Sprintf("could not create identity mount entry UUID: %v", err))
 	}
-	identityAccessor, err := c.generateMountAccessor("identity")
+	identityAccessor, err := c.generateMountAccessor("identity", "")
 	if err != nil {
 		panic(fmt.Sprintf("could not generate identity accessor: %v", err))
 	}
